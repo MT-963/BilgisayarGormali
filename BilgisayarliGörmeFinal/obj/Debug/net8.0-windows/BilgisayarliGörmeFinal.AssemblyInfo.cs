@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("BilgisayarliGörmeFinal")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8970451afa2ef7f1bbe0d871c185d19eea29fc85")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+65cebd99abbf683cfc569a591abc4392f6f5a5c0")]
 [assembly: System.Reflection.AssemblyProductAttribute("BilgisayarliGörmeFinal")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BilgisayarliGörmeFinal")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

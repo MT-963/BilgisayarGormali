@@ -12,6 +12,7 @@ using System.Windows.Forms;
 using System.Windows.Forms.DataVisualization.Charting;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 
 namespace BilgisayarliGörmeFinal
 {
@@ -36,24 +37,30 @@ namespace BilgisayarliGörmeFinal
         private int[] processedHistogramB = new int[256];
 
         // Renkler
-        private readonly Color darkBackground = Color.FromArgb(26, 32, 44);
-        private readonly Color sidebarColor = Color.FromArgb(30, 41, 59);
-        private readonly Color panelColor = Color.FromArgb(45, 55, 72);
-        private readonly Color accentColor = Color.FromArgb(16, 185, 129);
-        private readonly Color textColor = Color.FromArgb(226, 232, 240);
-        private readonly Color secondaryText = Color.FromArgb(148, 163, 184);
+        private Color darkBackground = Color.FromArgb(26, 32, 44);
+        private Color sidebarColor = Color.FromArgb(30, 41, 59);
+        private Color panelColor = Color.FromArgb(45, 55, 72);
+        private Color accentColor = Color.FromArgb(16, 185, 129);
+        private Color textColor = Color.FromArgb(226, 232, 240);
+        private Color secondaryText = Color.FromArgb(148, 163, 184);
+        private string currentTheme = "Dark";
 
         // Mevcut dil
         private string currentLanguage = "en";
+        private CancellationTokenSource processingCts;
 
         public Form1()
         {
             InitializeComponent();
+            EnsureCharts();
             SetupControls();
             SetupCharts();
             SetupListView();
+            InitializeUiDecorations();
             SetupEventHandlers();
+            ApplyTheme("Dark");
             UpdateParameterVisibility();
+            CenterMainPanels();
         }
 
         private void SetupControls()
@@ -80,6 +87,13 @@ namespace BilgisayarliGörmeFinal
             txtIterations.Text = "100";
             trackBarThreshold.Value = 128;
             lblThresholdDisplay.Text = "128";
+
+            // Tema seçenekleri
+            comboTheme.Items.Clear();
+            comboTheme.Items.AddRange(new string[] { "Dark", "Light", "Contrast" });
+            comboTheme.SelectedIndex = 0;
+
+            btnCancelProcessing.Enabled = false;
         }
 
         private void SetupEventHandlers()
@@ -88,14 +102,18 @@ namespace BilgisayarliGörmeFinal
             btnLoadImage.Click += BtnLoadImage_Click;
             btnProcessImage.Click += BtnApplyProcessing_Click;
             btnApplyProcessing.Click += BtnApplyProcessing_Click;
+            btnCancelProcessing.Click += BtnCancelProcessing_Click;
             btnStatistics.Click += BtnStatistics_Click;
             btnExport.Click += BtnExport_Click;
             btnSettings.Click += BtnSettings_Click;
+            btnQuickTour.Click += BtnQuickTour_Click;
+            btnShortcutTips.Click += BtnShortcutTips_Click;
+            comboTheme.SelectedIndexChanged += ComboTheme_SelectedIndexChanged;
+            panelMain.Resize += (s, e) => CenterMainPanels();
 
             // Dil butonları
             btnTurkish.Click += (s, e) => ChangeLanguage("tr");
             btnEnglish.Click += (s, e) => ChangeLanguage("en");
-            btnEnglish2.Click += (s, e) => ChangeLanguage("en");
             btnArabic.Click += (s, e) => ChangeLanguage("ar");
 
             // TrackBar
@@ -143,18 +161,28 @@ namespace BilgisayarliGörmeFinal
 
             foreach (var btn in buttons)
             {
-                btn.MouseEnter += (s, e) => {
-                    btn.BackColor = Color.FromArgb(71, 85, 105);
+                btn.MouseEnter += (s, e) =>
+                {
+                    btn.BackColor = Color.FromArgb(
+                        Math.Min(sidebarColor.R + 20, 255),
+                        Math.Min(sidebarColor.G + 20, 255),
+                        Math.Min(sidebarColor.B + 20, 255));
                 };
-                btn.MouseLeave += (s, e) => {
-                    btn.BackColor = Color.FromArgb(51, 65, 85);
+                btn.MouseLeave += (s, e) =>
+                {
+                    btn.BackColor = Color.FromArgb(
+                        Math.Max(sidebarColor.R - 5, 0),
+                        Math.Max(sidebarColor.G - 5, 0),
+                        Math.Max(sidebarColor.B - 5, 0));
                 };
             }
 
-            btnApplyProcessing.MouseEnter += (s, e) => {
+            btnApplyProcessing.MouseEnter += (s, e) =>
+            {
                 btnApplyProcessing.BackColor = Color.FromArgb(5, 150, 105);
             };
-            btnApplyProcessing.MouseLeave += (s, e) => {
+            btnApplyProcessing.MouseLeave += (s, e) =>
+            {
                 btnApplyProcessing.BackColor = accentColor;
             };
         }
@@ -240,6 +268,277 @@ namespace BilgisayarliGörmeFinal
             }
         }
 
+        private void InitializeUiDecorations()
+        {
+            UpdateKpiCards(algorithm: "—", processingMs: 0, pixels: 0);
+            RefreshPlaceholders();
+        }
+
+        private void RefreshPlaceholders()
+        {
+            lblOriginalPlaceholder.Visible = originalImage == null;
+            lblProcessedPlaceholder.Visible = processedImage == null;
+            lblOriginalPlaceholder.BringToFront();
+            lblProcessedPlaceholder.BringToFront();
+        }
+
+        private void EnsureCharts()
+        {
+            if (chart1 == null)
+            {
+                chart1 = new Chart
+                {
+                    Name = "chart1",
+                    Dock = DockStyle.Fill,
+                    BackColor = Color.FromArgb(30, 41, 59),
+                };
+                chart1.ChartAreas.Add(new ChartArea("ChartArea1"));
+                chart1.Legends.Add(new Legend("Legend1"));
+                panelAnalysisResults.Controls.Add(chart1);
+                chart1.BringToFront();
+            }
+
+            if (chart2 == null)
+            {
+                chart2 = new Chart
+                {
+                    Name = "chart2",
+                    Dock = DockStyle.Fill,
+                    BackColor = Color.FromArgb(30, 41, 59),
+                };
+                chart2.ChartAreas.Add(new ChartArea("ChartArea2"));
+                chart2.Legends.Add(new Legend("Legend2"));
+                panelAnalysisResults2.Controls.Add(chart2);
+                chart2.BringToFront();
+            }
+        }
+
+        private void CenterMainPanels()
+        {
+            // Target widths with gaps
+            int gap = 20;
+            int totalWidth = panelOriginalImage.Width + gap + panelProcessedImage.Width + gap + panelStats.Width;
+            int startX = Math.Max(gap, (panelMain.ClientSize.Width - totalWidth) / 2);
+
+            // Y positions remain as designed
+            int yImages = panelOriginalImage.Location.Y;
+            int yControls = panelProcessingControls.Location.Y;
+            int yCharts1 = panelAnalysisResults.Location.Y;
+            int yCharts2 = panelAnalysisResults2.Location.Y;
+            int yKpi = panelKpiStrip.Location.Y;
+
+            // Position rows
+            panelKpiStrip.Location = new Point(startX, yKpi);
+
+            panelOriginalImage.Location = new Point(startX, yImages);
+            panelProcessedImage.Location = new Point(panelOriginalImage.Right + gap, yImages);
+            panelStats.Location = new Point(panelProcessedImage.Right + gap, yImages);
+
+            panelProcessingControls.Location = new Point(startX, yControls);
+            panelAnalysisResults.Location = new Point(panelProcessedImage.Location.X, yCharts1);
+            panelAnalysisResults2.Location = new Point(panelProcessedImage.Location.X, yCharts2);
+
+            // Update scrollable minimum size
+            int contentWidth = totalWidth + gap * 2;
+            int contentHeight = Math.Max(panelAnalysisResults2.Bottom, panelProcessingControls.Bottom) + gap;
+            panelMain.AutoScrollMinSize = new Size(contentWidth, contentHeight);
+        }
+
+        private void ComboTheme_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            var selected = comboTheme.SelectedItem?.ToString() ?? "Dark";
+            ApplyTheme(selected);
+        }
+
+        private void ApplyThemeInternal(string theme)
+        {
+            currentTheme = theme;
+
+            // Palet seçimleri
+            if (theme == "Light")
+            {
+                darkBackground = Color.FromArgb(245, 247, 250);
+                sidebarColor = Color.FromArgb(232, 234, 237);
+                panelColor = Color.FromArgb(255, 255, 255);
+                accentColor = Color.FromArgb(16, 185, 129);
+                textColor = Color.FromArgb(25, 39, 52);
+                secondaryText = Color.FromArgb(99, 115, 129);
+            }
+            else if (theme == "Contrast")
+            {
+                darkBackground = Color.FromArgb(18, 18, 18);
+                sidebarColor = Color.FromArgb(32, 32, 32);
+                panelColor = Color.FromArgb(45, 45, 45);
+                accentColor = Color.FromArgb(255, 193, 7);
+                textColor = Color.FromArgb(245, 245, 245);
+                secondaryText = Color.FromArgb(200, 200, 200);
+            }
+            else // Dark default
+            {
+                darkBackground = Color.FromArgb(26, 32, 44);
+                sidebarColor = Color.FromArgb(30, 41, 59);
+                panelColor = Color.FromArgb(45, 55, 72);
+                accentColor = Color.FromArgb(16, 185, 129);
+                textColor = Color.FromArgb(226, 232, 240);
+                secondaryText = Color.FromArgb(148, 163, 184);
+            }
+
+            // Form ve paneller
+            this.BackColor = darkBackground;
+            panelMain.BackColor = darkBackground;
+            panelHeader.BackColor = darkBackground;
+            panelStatus.BackColor = panelColor;
+            panelSidebar.BackColor = sidebarColor;
+            panelOriginalImage.BackColor = panelColor;
+            panelProcessedImage.BackColor = panelColor;
+            panelProcessingControls.BackColor = panelColor;
+            panelAnalysisResults.BackColor = panelColor;
+            panelAnalysisResults2.BackColor = panelColor;
+            panelStats.BackColor = panelColor;
+            panelKpiStrip.BackColor = Color.FromArgb(
+                Math.Min(panelColor.R + 10, 255),
+                Math.Min(panelColor.G + 10, 255),
+                Math.Min(panelColor.B + 10, 255));
+            panelKpiPerformance.BackColor = panelColor;
+            panelKpiPixels.BackColor = panelColor;
+            panelKpiAlgorithm.BackColor = panelColor;
+
+            // Text renkleri
+            lblTitle.ForeColor = textColor;
+            lblLogo.ForeColor = accentColor;
+            lblOriginalImage.ForeColor = secondaryText;
+            lblProcessedImage.ForeColor = secondaryText;
+            lblProcessingControls.ForeColor = textColor;
+            lblSelectAlgorithm.ForeColor = textColor;
+            lblNumberCluster.ForeColor = secondaryText;
+            lblNumIterations.ForeColor = secondaryText;
+            lblIterations.ForeColor = secondaryText;
+            lblThresholdValue.ForeColor = secondaryText;
+            lblAnalysisResults.ForeColor = textColor;
+            lblAnalysisResults2.ForeColor = textColor;
+            lblPanelStats.ForeColor = secondaryText;
+            lblStatus.ForeColor = secondaryText;
+            lblProcessingTime.ForeColor = secondaryText;
+            lblProgressPercent.ForeColor = secondaryText;
+            lblTotalPixels.ForeColor = secondaryText;
+            lblQuickActions.ForeColor = secondaryText;
+            lblLanguage.ForeColor = secondaryText;
+            lblStatistics.ForeColor = secondaryText;
+            lblTheme.ForeColor = secondaryText;
+            lblKpiAlgorithmTitle.ForeColor = secondaryText;
+            lblKpiPixelsTitle.ForeColor = secondaryText;
+            lblKpiProcessingTitle.ForeColor = secondaryText;
+            lblKpiAlgorithmValue.ForeColor = textColor;
+            lblKpiPixelsValue.ForeColor = textColor;
+            lblKpiProcessingValue.ForeColor = textColor;
+            lblOriginalPlaceholder.ForeColor = secondaryText;
+            lblProcessedPlaceholder.ForeColor = secondaryText;
+
+            // ListView
+            listViewStats.BackColor = panelColor;
+            listViewStats.ForeColor = textColor;
+            listViewStats.GridLines = true;
+
+            // Picture boxes background
+            pictureBox1.BackColor = sidebarColor;
+            pictureBox2.BackColor = sidebarColor;
+            lblOriginalPlaceholder.BackColor = sidebarColor;
+            lblProcessedPlaceholder.BackColor = sidebarColor;
+
+            // Buttons
+            StyleButton(btnLoadImage);
+            StyleButton(btnProcessImage);
+            StyleButton(btnStatistics);
+            StyleButton(btnSettings);
+            StyleButton(btnExport);
+            StyleButton(btnShortcutTips);
+            StyleButton(btnQuickTour, isPrimary: true);
+            StyleButton(btnApplyProcessing, isPrimary: true);
+            StyleButton(btnArabic, isPrimary: false, solid: true);
+            StyleButton(btnEnglish, isPrimary: true, solid: true);
+            StyleButton(btnTurkish, isPrimary: true, solid: true);
+
+            // Combo boxes
+            comboTheme.BackColor = sidebarColor;
+            comboTheme.ForeColor = textColor;
+            comboBoxAlgorithm.BackColor = sidebarColor;
+            comboBoxAlgorithm.ForeColor = textColor;
+
+            // Progress bar
+            progressBar.BackColor = sidebarColor;
+
+            // Charts
+            RefreshChartsTheme();
+
+            UpdateLanguageSelectionVisuals();
+            CenterMainPanels();
+        }
+
+        private void RefreshChartsTheme()
+        {
+            ApplyChartTheme(chart1);
+            ApplyChartTheme(chart2);
+        }
+
+        private void ApplyChartTheme(System.Windows.Forms.DataVisualization.Charting.Chart chart)
+        {
+            foreach (var area in chart.ChartAreas)
+            {
+                area.BackColor = sidebarColor;
+                area.AxisX.LabelStyle.ForeColor = secondaryText;
+                area.AxisY.LabelStyle.ForeColor = secondaryText;
+                area.AxisX.LineColor = Color.FromArgb(71, 85, 105);
+                area.AxisY.LineColor = Color.FromArgb(71, 85, 105);
+                area.AxisX.MajorGrid.LineColor = Color.FromArgb(51, 65, 85);
+                area.AxisY.MajorGrid.LineColor = Color.FromArgb(51, 65, 85);
+            }
+            foreach (var legend in chart.Legends)
+            {
+                legend.ForeColor = textColor;
+                legend.BackColor = Color.Transparent;
+            }
+        }
+
+        private void StyleButton(Button btn, bool isPrimary = false, bool solid = false)
+        {
+            if (solid)
+            {
+                btn.BackColor = isPrimary ? accentColor : sidebarColor;
+                btn.ForeColor = textColor;
+            }
+            else if (isPrimary)
+            {
+                btn.BackColor = accentColor;
+                btn.ForeColor = Color.White;
+            }
+            else
+            {
+                btn.BackColor = Color.FromArgb(
+                    Math.Max(sidebarColor.R - 5, 0),
+                    Math.Max(sidebarColor.G - 5, 0),
+                    Math.Max(sidebarColor.B - 5, 0));
+                btn.ForeColor = textColor;
+            }
+        }
+
+        private void UpdateKpiCards(string algorithm = null, long? processingMs = null, int? pixels = null)
+        {
+            if (processingMs.HasValue)
+            {
+                lblKpiProcessingValue.Text = $"{processingMs.Value} ms";
+            }
+
+            if (pixels.HasValue)
+            {
+                lblKpiPixelsValue.Text = pixels.Value > 0 ? $"{pixels.Value:N0}" : "0";
+            }
+
+            if (!string.IsNullOrWhiteSpace(algorithm))
+            {
+                lblKpiAlgorithmValue.Text = algorithm;
+            }
+        }
+
         private async void BtnLoadImage_Click(object sender, EventArgs e)
         {
             using (OpenFileDialog openFileDialog = new OpenFileDialog())
@@ -264,6 +563,8 @@ namespace BilgisayarliGörmeFinal
                         {
                             using (var tempImage = new Bitmap(filePath))
                             {
+                                ApplyExifOrientation(tempImage);
+
                                 // Yeni bir kopya oluştur (dosyayı serbest bırakmak için)
                                 loadedImage = new Bitmap(tempImage.Width, tempImage.Height, PixelFormat.Format24bppRgb);
                                 using (Graphics g = Graphics.FromImage(loadedImage))
@@ -283,7 +584,7 @@ namespace BilgisayarliGörmeFinal
                         originalImage = loadedImage;
                         pictureBox1.Image = originalImage;
                         pictureBox2.Image = null;
-                        
+
                         if (processedImage != null)
                         {
                             processedImage.Dispose();
@@ -292,6 +593,10 @@ namespace BilgisayarliGörmeFinal
 
                         totalPixels = originalImage.Width * originalImage.Height;
                         lblTotalPixels.Text = $"Total Pixels: {totalPixels:N0}";
+                        UpdateKpiCards(algorithm: comboBoxAlgorithm.SelectedItem?.ToString(),
+                                       pixels: totalPixels,
+                                       processingMs: 0);
+                        RefreshPlaceholders();
 
                         // Histogram hesapla - kopya üzerinde
                         Bitmap histogramCopy = CloneBitmap(originalImage);
@@ -303,12 +608,14 @@ namespace BilgisayarliGörmeFinal
 
                         lblStatus.Text = currentLanguage == "tr" ? "Durum: Resim yüklendi" : "Status: Image loaded";
                         progressBar.Value = 100;
+                        lblProgressPercent.Text = "100%";
                     }
                     catch (Exception ex)
                     {
                         MessageBox.Show($"Error: {ex.Message}", "Error",
                             MessageBoxButtons.OK, MessageBoxIcon.Error);
                         lblStatus.Text = currentLanguage == "tr" ? "Durum: Hata oluştu" : "Status: Error";
+                        RefreshPlaceholders();
                     }
                     finally
                     {
@@ -333,6 +640,45 @@ namespace BilgisayarliGörmeFinal
             }
         }
 
+        // EXIF orientation düzeltmesi: dikey/ yatay sapmaları önler
+        private Bitmap ApplyExifOrientation(Bitmap bmp)
+        {
+            try
+            {
+                const int ExifOrientationId = 0x0112;
+                if (bmp.PropertyIdList.Contains(ExifOrientationId))
+                {
+                    var prop = bmp.GetPropertyItem(ExifOrientationId);
+                    int orientation = BitConverter.ToUInt16(prop.Value, 0);
+
+                    RotateFlipType rft = RotateFlipType.RotateNoneFlipNone;
+                    switch (orientation)
+                    {
+                        case 2: rft = RotateFlipType.RotateNoneFlipX; break;
+                        case 3: rft = RotateFlipType.Rotate180FlipNone; break;
+                        case 4: rft = RotateFlipType.Rotate180FlipX; break;
+                        case 5: rft = RotateFlipType.Rotate90FlipX; break;
+                        case 6: rft = RotateFlipType.Rotate90FlipNone; break;
+                        case 7: rft = RotateFlipType.Rotate270FlipX; break;
+                        case 8: rft = RotateFlipType.Rotate270FlipNone; break;
+                        default: rft = RotateFlipType.RotateNoneFlipNone; break;
+                    }
+
+                    if (rft != RotateFlipType.RotateNoneFlipNone)
+                    {
+                        bmp.RotateFlip(rft);
+                        // Yeniden uygulanmaması için kaldır
+                        bmp.RemovePropertyItem(ExifOrientationId);
+                    }
+                }
+            }
+            catch
+            {
+                // EXIF yoksa ya da desteklenmiyorsa sessizce geç
+            }
+            return bmp;
+        }
+
         private async void BtnApplyProcessing_Click(object sender, EventArgs e)
         {
             if (originalImage == null)
@@ -349,7 +695,12 @@ namespace BilgisayarliGörmeFinal
             progressBar.Value = 0;
             btnLoadImage.Enabled = false;
             btnApplyProcessing.Enabled = false;
+            btnCancelProcessing.Enabled = true;
             stopwatch.Restart();
+
+            processingCts?.Dispose();
+            processingCts = new CancellationTokenSource();
+            var token = processingCts.Token;
 
             try
             {
@@ -375,34 +726,35 @@ namespace BilgisayarliGörmeFinal
 
                 Bitmap result = await Task.Run(() =>
                 {
+                    token.ThrowIfCancellationRequested();
                     switch (selectedAlgorithm)
                     {
                         case "K-Means Clustering":
-                            return ApplyKMeansIntensityFast(workingCopy, clusterCount, maxIterations, progress);
+                            return ApplyKMeansIntensityFast(workingCopy, clusterCount, maxIterations, progress, token);
                         case "Grayscale":
-                            return ApplyGrayscaleFast(workingCopy, progress);
+                            return ApplyGrayscaleFast(workingCopy, progress, token);
                         case "Y Channel (Luminance)":
-                            return ApplyYChannelFast(workingCopy, progress);
+                            return ApplyYChannelFast(workingCopy, progress, token);
                         case "Histogram Equalization":
-                            return ApplyHistogramEqualizationFast(workingCopy, progress);
+                            return ApplyHistogramEqualizationFast(workingCopy, progress, token);
                         case "Edge Detection (Sobel)":
-                            return ApplyEdgeDetectionFast(workingCopy, thresholdValue, progress);
+                            return ApplyEdgeDetectionFast(workingCopy, thresholdValue, progress, token);
                         case "KM Euclidean RGB":
-                            return ApplyKMeansRGBFast(workingCopy, clusterCount, maxIterations, progress);
+                            return ApplyKMeansRGBFast(workingCopy, clusterCount, maxIterations, progress, token);
                         case "KM Mahalanobis":
-                            return ApplyKMeansIntensityFast(workingCopy, clusterCount, maxIterations, progress);
+                            return ApplyKMeansIntensityFast(workingCopy, clusterCount, maxIterations, progress, token);
                         case "Binary Threshold":
-                            return ApplyBinaryThresholdFast(workingCopy, thresholdValue, progress);
+                            return ApplyBinaryThresholdFast(workingCopy, thresholdValue, progress, token);
                         case "Gaussian Blur":
-                            return ApplyGaussianBlurFast(workingCopy, progress);
+                            return ApplyGaussianBlurFast(workingCopy, progress, token);
                         case "Sharpen Filter":
-                            return ApplySharpenFilterFast(workingCopy, progress);
+                            return ApplySharpenFilterFast(workingCopy, progress, token);
                         case "Invert Colors":
-                            return ApplyInvertColorsFast(workingCopy, progress);
+                            return ApplyInvertColorsFast(workingCopy, progress, token);
                         default:
-                            return ApplyGrayscaleFast(workingCopy, progress);
+                            return ApplyGrayscaleFast(workingCopy, progress, token);
                     }
-                });
+                }, token);
 
                 // Çalışma kopyasını temizle
                 workingCopy.Dispose();
@@ -419,8 +771,11 @@ namespace BilgisayarliGörmeFinal
                 pictureBox2.Image = processedImage;
 
                 lblProcessingTime.Text = $"Processing Time: {stopwatch.ElapsedMilliseconds}ms";
+                UpdateKpiCards(algorithm: selectedAlgorithm, processingMs: stopwatch.ElapsedMilliseconds);
                 lblStatus.Text = currentLanguage == "tr" ? "Durum: İşlem tamamlandı" : "Status: Completed";
                 progressBar.Value = 100;
+                lblProgressPercent.Text = "100%";
+                RefreshPlaceholders();
 
                 if (processedImage != null)
                 {
@@ -431,17 +786,30 @@ namespace BilgisayarliGörmeFinal
                     UpdateStatsWithImageData();
                 }
             }
+            catch (OperationCanceledException)
+            {
+                stopwatch.Stop();
+                lblStatus.Text = currentLanguage == "tr" ? "Durum: İptal edildi" :
+                                 currentLanguage == "ar" ? "الحالة: تم الإلغاء" :
+                                 "Status: Cancelled";
+                progressBar.Value = 0;
+                lblProgressPercent.Text = "0%";
+                pictureBox2.Image = processedImage;
+            }
             catch (Exception ex)
             {
                 stopwatch.Stop();
                 lblStatus.Text = currentLanguage == "tr" ? "Durum: Hata" : "Status: Error";
                 MessageBox.Show($"Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+     
             finally
             {
                 isProcessing = false;
                 btnLoadImage.Enabled = true;
                 btnApplyProcessing.Enabled = true;
+                btnCancelProcessing.Enabled = false;
+                RefreshPlaceholders();
             }
         }
 
@@ -527,7 +895,7 @@ namespace BilgisayarliGörmeFinal
         // HIZLI ALGORİTMALAR
         // ==================
 
-        private Bitmap ApplyGrayscaleFast(Bitmap source, IProgress<int> progress)
+        private Bitmap ApplyGrayscaleFast(Bitmap source, IProgress<int> progress, CancellationToken ct)
         {
             int width = source.Width;
             int height = source.Height;
@@ -550,6 +918,7 @@ namespace BilgisayarliGörmeFinal
 
             for (int y = 0; y < height; y++)
             {
+                ct.ThrowIfCancellationRequested();
                 for (int x = 0; x < width; x++)
                 {
                     int idx = y * stride + x * 3;
@@ -572,7 +941,7 @@ namespace BilgisayarliGörmeFinal
             return result;
         }
 
-        private Bitmap ApplyYChannelFast(Bitmap source, IProgress<int> progress)
+        private Bitmap ApplyYChannelFast(Bitmap source, IProgress<int> progress, CancellationToken ct)
         {
             int width = source.Width;
             int height = source.Height;
@@ -595,6 +964,7 @@ namespace BilgisayarliGörmeFinal
 
             for (int y = 0; y < height; y++)
             {
+                ct.ThrowIfCancellationRequested();
                 for (int x = 0; x < width; x++)
                 {
                     int idx = y * stride + x * 3;
@@ -621,7 +991,7 @@ namespace BilgisayarliGörmeFinal
             return result;
         }
 
-        private Bitmap ApplyHistogramEqualizationFast(Bitmap source, IProgress<int> progress)
+        private Bitmap ApplyHistogramEqualizationFast(Bitmap source, IProgress<int> progress, CancellationToken ct)
         {
             int width = source.Width;
             int height = source.Height;
@@ -656,6 +1026,7 @@ namespace BilgisayarliGörmeFinal
 
             for (int y = 0; y < height; y++)
             {
+                ct.ThrowIfCancellationRequested();
                 for (int x = 0; x < width; x++)
                 {
                     int idx = y * stride + x * 3;
@@ -679,7 +1050,7 @@ namespace BilgisayarliGörmeFinal
             return result;
         }
 
-        private Bitmap ApplyBinaryThresholdFast(Bitmap source, int threshold, IProgress<int> progress)
+        private Bitmap ApplyBinaryThresholdFast(Bitmap source, int threshold, IProgress<int> progress, CancellationToken ct)
         {
             int width = source.Width;
             int height = source.Height;
@@ -703,6 +1074,7 @@ namespace BilgisayarliGörmeFinal
 
             for (int y = 0; y < height; y++)
             {
+                ct.ThrowIfCancellationRequested();
                 for (int x = 0; x < width; x++)
                 {
                     int idx = y * stride + x * 3;
@@ -726,7 +1098,7 @@ namespace BilgisayarliGörmeFinal
             return result;
         }
 
-        private Bitmap ApplyInvertColorsFast(Bitmap source, IProgress<int> progress)
+        private Bitmap ApplyInvertColorsFast(Bitmap source, IProgress<int> progress, CancellationToken ct)
         {
             int width = source.Width;
             int height = source.Height;
@@ -749,6 +1121,7 @@ namespace BilgisayarliGörmeFinal
 
             for (int y = 0; y < height; y++)
             {
+                ct.ThrowIfCancellationRequested();
                 for (int x = 0; x < width; x++)
                 {
                     int idx = y * stride + x * 3;
@@ -770,7 +1143,7 @@ namespace BilgisayarliGörmeFinal
             return result;
         }
 
-        private Bitmap ApplyEdgeDetectionFast(Bitmap source, int threshold, IProgress<int> progress)
+        private Bitmap ApplyEdgeDetectionFast(Bitmap source, int threshold, IProgress<int> progress, CancellationToken ct)
         {
             int width = source.Width;
             int height = source.Height;
@@ -796,6 +1169,7 @@ namespace BilgisayarliGörmeFinal
             int[,] gray = new int[width, height];
             for (int y = 0; y < height; y++)
             {
+                ct.ThrowIfCancellationRequested();
                 for (int x = 0; x < width; x++)
                 {
                     int idx = y * stride + x * 3;
@@ -809,6 +1183,7 @@ namespace BilgisayarliGörmeFinal
 
             for (int y = 1; y < height - 1; y++)
             {
+                ct.ThrowIfCancellationRequested();
                 for (int x = 1; x < width - 1; x++)
                 {
                     int gx = 0, gy = 0;
@@ -844,7 +1219,7 @@ namespace BilgisayarliGörmeFinal
             return result;
         }
 
-        private Bitmap ApplyGaussianBlurFast(Bitmap source, IProgress<int> progress)
+        private Bitmap ApplyGaussianBlurFast(Bitmap source, IProgress<int> progress, CancellationToken ct)
         {
             int width = source.Width;
             int height = source.Height;
@@ -878,6 +1253,7 @@ namespace BilgisayarliGörmeFinal
 
             for (int y = 2; y < height - 2; y++)
             {
+                ct.ThrowIfCancellationRequested();
                 for (int x = 2; x < width - 2; x++)
                 {
                     double r = 0, g = 0, b = 0;
@@ -913,7 +1289,7 @@ namespace BilgisayarliGörmeFinal
             return result;
         }
 
-        private Bitmap ApplySharpenFilterFast(Bitmap source, IProgress<int> progress)
+        private Bitmap ApplySharpenFilterFast(Bitmap source, IProgress<int> progress, CancellationToken ct)
         {
             int width = source.Width;
             int height = source.Height;
@@ -940,6 +1316,7 @@ namespace BilgisayarliGörmeFinal
 
             for (int y = 1; y < height - 1; y++)
             {
+                ct.ThrowIfCancellationRequested();
                 for (int x = 1; x < width - 1; x++)
                 {
                     int r = 0, g = 0, b = 0;
@@ -975,7 +1352,7 @@ namespace BilgisayarliGörmeFinal
             return result;
         }
 
-        private Bitmap ApplyKMeansIntensityFast(Bitmap source, int k, int maxIterations, IProgress<int> progress)
+        private Bitmap ApplyKMeansIntensityFast(Bitmap source, int k, int maxIterations, IProgress<int> progress, CancellationToken ct)
         {
 
             int width = source.Width;
@@ -996,6 +1373,7 @@ namespace BilgisayarliGörmeFinal
             byte[,] grayImage = new byte[width, height];
             for (int y = 0; y < height; y++)
             {
+                ct.ThrowIfCancellationRequested();
                 for (int x = 0; x < width; x++)
                 {
                     int idx = y * stride + x * 3;
@@ -1017,6 +1395,7 @@ namespace BilgisayarliGörmeFinal
 
             while (changed && iteration < maxIterations)
             {
+                ct.ThrowIfCancellationRequested();
                 changed = false;
 
                 for (int y = 0; y < height; y++)
@@ -1066,6 +1445,7 @@ namespace BilgisayarliGörmeFinal
                 }
 
                 iteration++;
+                ct.ThrowIfCancellationRequested();
                 progress?.Report((iteration * 100) / maxIterations);
             }
 
@@ -1095,7 +1475,7 @@ namespace BilgisayarliGörmeFinal
             return result;
         }
 
-        private Bitmap ApplyKMeansRGBFast(Bitmap source, int k, int maxIterations, IProgress<int> progress)
+        private Bitmap ApplyKMeansRGBFast(Bitmap source, int k, int maxIterations, IProgress<int> progress, CancellationToken ct)
         {
 
             int width = source.Width;
@@ -1130,10 +1510,12 @@ namespace BilgisayarliGörmeFinal
 
             while (changed && iteration < maxIterations)
             {
+                ct.ThrowIfCancellationRequested();
                 changed = false;
 
                 for (int y = 0; y < height; y++)
                 {
+                    ct.ThrowIfCancellationRequested();
                     for (int x = 0; x < width; x++)
                     {
                         int idx = y * stride + x * 3;
@@ -1172,6 +1554,7 @@ namespace BilgisayarliGörmeFinal
 
                 for (int y = 0; y < height; y++)
                 {
+                    ct.ThrowIfCancellationRequested();
                     for (int x = 0; x < width; x++)
                     {
                         int idx = y * stride + x * 3;
@@ -1376,17 +1759,60 @@ namespace BilgisayarliGörmeFinal
 
         private void BtnSettings_Click(object sender, EventArgs e)
         {
-            string title = currentLanguage == "tr" ? "Ayarlar" : "Settings";
-            string msg = currentLanguage == "tr" ?
-                $"Mevcut Ayarlar:\n\n" +
-                $"• Küme Sayısı: {txtNumberCluster.Text}\n" +
-                $"• Maksimum İterasyon: {txtIterations.Text}\n" +
-                $"• Eşik Değeri: {trackBarThreshold.Value}"
-                :
-                $"Current Settings:\n\n" +
-                $"• Cluster Count: {txtNumberCluster.Text}\n" +
-                $"• Max Iterations: {txtIterations.Text}\n" +
-                $"• Threshold: {trackBarThreshold.Value}";
+            string title;
+            string msg;
+
+            switch (currentLanguage)
+            {
+                case "tr":
+                    title = "Ayarlar";
+                    msg =
+                        "Mevcut Ayarlar:\n" +
+                        "----------------\n" +
+                        $"• Küme Sayısı: {txtNumberCluster.Text}\n" +
+                        $"• Maksimum İterasyon: {txtIterations.Text}\n" +
+                        $"• Eşik Değeri: {trackBarThreshold.Value}\n" +
+                        $"• Tema: {comboTheme.SelectedItem}\n" +
+                        "\nÖnerilen Ayarlar:\n" +
+                        "----------------\n" +
+                        "• Otomatik parlaklık uyarısı\n" +
+                        "• Otomatik حفظ نسخة أصلية قبل المعالجة\n" +
+                        "• تفعيل التحسين المتدرج للحواف\n" +
+                        "\nتلميح: فعّل الثيم المناسب قبل المعالجة لتقليل إرهاق العين.";
+                    break;
+                case "ar":
+                    title = "الإعدادات";
+                    msg =
+                        "الإعدادات الحالية:\n" +
+                        "-----------------\n" +
+                        $"• عدد العناقيد: {txtNumberCluster.Text}\n" +
+                        $"• الحد الأقصى للتكرارات: {txtIterations.Text}\n" +
+                        $"• قيمة العتبة: {trackBarThreshold.Value}\n" +
+                        $"• السمة: {comboTheme.SelectedItem}\n" +
+                        "\nإعدادات مقترحة:\n" +
+                        "-----------------\n" +
+                        "• تنبيه تلقائي للإضاءة المنخفضة\n" +
+                        "• حفظ نسخة أصلية قبل كل معالجة\n" +
+                        "• تحسين تدريجي للحواف\n" +
+                        "\nتلميح: اختر السمة المناسبة قبل بدء المعالجة لتخفيف إجهاد العين.";
+                    break;
+                default:
+                    title = "Settings";
+                    msg =
+                        "Current Settings:\n" +
+                        "-----------------\n" +
+                        $"• Cluster Count: {txtNumberCluster.Text}\n" +
+                        $"• Max Iterations: {txtIterations.Text}\n" +
+                        $"• Threshold: {trackBarThreshold.Value}\n" +
+                        $"• Theme: {comboTheme.SelectedItem}\n" +
+                        "\nSuggested Options:\n" +
+                        "------------------\n" +
+                        "• Auto low-light warning\n" +
+                        "• Auto-save original before processing\n" +
+                        "• Progressive edge enhancement\n" +
+                        "\nTip: pick a comfortable theme before processing to reduce eye strain.";
+                    break;
+            }
 
             MessageBox.Show(msg, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -1404,15 +1830,29 @@ namespace BilgisayarliGörmeFinal
                     btnStatistics.Text = "📊  İstatistikler";
                     btnSettings.Text = "⚙  Ayarlar";
                     btnExport.Text = "↓  Sonucu Kaydet";
+                    btnQuickTour.Text = "Hızlı Tur";
+                    btnShortcutTips.Text = "İpucu Kartı";
+                    lblQuickActions.Text = "✨ Hızlı Rehber";
                     lblOriginalImage.Text = "ORİJİNAL RESİM";
+                    lblOriginalPlaceholder.Text = "Önizleme için resim yükleyin";
                     lblProcessedImage.Text = "İŞLENMİŞ RESİM";
+                    lblProcessedPlaceholder.Text = "İşlenmiş önizleme burada";
                     lblProcessingControls.Text = "İşlem Kontrolleri";
                     lblSelectAlgorithm.Text = "Algoritma Seç";
                     lblNumberCluster.Text = "Küme Sayısı";
                     lblNumIterations.Text = "Max İterasyon";
                     lblIterations.Text = "İterasyon";
                     lblThresholdValue.Text = "Eşik Değeri (0-255)";
+                    lblTheme.Text = "🎨  Tema";
+                    lblKpiProcessingTitle.Text = "İşlem Süresi (ms)";
+                    lblKpiPixelsTitle.Text = "Toplam Piksel";
+                    lblKpiAlgorithmTitle.Text = "Aktif Model/Filtre";
                     btnApplyProcessing.Text = "İŞLEMİ UYGULA";
+                    btnCancelProcessing.Text = "İptal";
+                    btnSettings.Text = "⚙  Ayarlar";
+                    btnExport.Text = "↓  Sonucu Kaydet";
+                    btnQuickTour.Text = "Hızlı Tur";
+                    btnShortcutTips.Text = "İpucu Kartı";
                     lblAnalysisResults.Text = "Analiz Sonuçları";
                     lblAnalysisResults2.Text = "Karşılaştırma";
                     lblStatus.Text = "Durum: Hazır";
@@ -1424,15 +1864,29 @@ namespace BilgisayarliGörmeFinal
                     btnStatistics.Text = "📊  Statistics";
                     btnSettings.Text = "⚙  Settings";
                     btnExport.Text = "↓  Export Results";
+                    btnQuickTour.Text = "Quick Tour";
+                    btnShortcutTips.Text = "UI Tips";
+                    lblQuickActions.Text = "✨ Guided Tools";
                     lblOriginalImage.Text = "ORIGINAL IMAGE";
+                    lblOriginalPlaceholder.Text = "Load an image to preview";
                     lblProcessedImage.Text = "PROCESSED IMAGE";
+                    lblProcessedPlaceholder.Text = "Processed preview will appear here";
                     lblProcessingControls.Text = "Processing Controls";
                     lblSelectAlgorithm.Text = "Select Algorithm";
                     lblNumberCluster.Text = "Cluster Count";
                     lblNumIterations.Text = "Max Iterations";
                     lblIterations.Text = "Iterations";
                     lblThresholdValue.Text = "Threshold (0-255)";
+                    lblTheme.Text = "🎨  Theme";
+                    lblKpiProcessingTitle.Text = "Processing Time (ms)";
+                    lblKpiPixelsTitle.Text = "Total Pixels";
+                    lblKpiAlgorithmTitle.Text = "Current Model/Filter";
                     btnApplyProcessing.Text = "APPLY PROCESSING";
+                    btnCancelProcessing.Text = "Cancel";
+                    btnSettings.Text = "⚙  Settings";
+                    btnExport.Text = "↓  Export Results";
+                    btnQuickTour.Text = "Quick Tour";
+                    btnShortcutTips.Text = "UI Tips";
                     lblAnalysisResults.Text = "Analysis Results";
                     lblAnalysisResults2.Text = "Comparison";
                     lblStatus.Text = "Status: Ready";
@@ -1444,20 +1898,169 @@ namespace BilgisayarliGörmeFinal
                     btnStatistics.Text = "📊  إحصائيات";
                     btnSettings.Text = "⚙  الإعدادات";
                     btnExport.Text = "↓  تصدير النتائج";
+                    btnQuickTour.Text = "جولة سريعة";
+                    btnShortcutTips.Text = "نصائح الواجهة";
+                    lblQuickActions.Text = "✨ أدوات إرشادية";
                     lblOriginalImage.Text = "الصورة الأصلية";
+                    lblOriginalPlaceholder.Text = "حمّل صورة لعرضها هنا";
                     lblProcessedImage.Text = "الصورة المعالجة";
+                    lblProcessedPlaceholder.Text = "ستظهر المعالجة هنا";
                     lblProcessingControls.Text = "عناصر التحكم";
                     lblSelectAlgorithm.Text = "اختر الخوارزمية";
                     lblNumberCluster.Text = "عدد المجموعات";
                     lblNumIterations.Text = "الحد الأقصى";
                     lblIterations.Text = "التكرارات";
                     lblThresholdValue.Text = "قيمة العتبة (0-255)";
+                    lblTheme.Text = "🎨  السمة";
+                    lblKpiProcessingTitle.Text = "زمن المعالجة (مللي ثانية)";
+                    lblKpiPixelsTitle.Text = "إجمالي البكسلات";
+                    lblKpiAlgorithmTitle.Text = "النموذج/الفلتر الحالي";
                     btnApplyProcessing.Text = "تطبيق المعالجة";
+                    btnCancelProcessing.Text = "إلغاء";
+                    btnSettings.Text = "⚙  الإعدادات";
+                    btnExport.Text = "↓  تصدير النتائج";
+                    btnQuickTour.Text = "جولة سريعة";
+                    btnShortcutTips.Text = "نصائح الواجهة";
                     lblAnalysisResults.Text = "نتائج التحليل";
                     lblAnalysisResults2.Text = "مقارنة";
                     lblStatus.Text = "الحالة: جاهز";
                     break;
             }
+
+            UpdateLanguageSelectionVisuals();
+        }
+
+        private void ApplyTheme(string theme)
+        {
+            // Update combo selection to keep UI in sync
+            if (!string.Equals(comboTheme.SelectedItem?.ToString(), theme, StringComparison.OrdinalIgnoreCase))
+            {
+                int idx = comboTheme.Items.IndexOf(theme);
+                if (idx >= 0) comboTheme.SelectedIndex = idx;
+            }
+            ApplyThemeInternal(theme);
+        }
+
+        private void BtnCancelProcessing_Click(object sender, EventArgs e)
+        {
+            processingCts?.Cancel();
+            lblStatus.Text = currentLanguage == "tr" ? "Durum: İptal ediliyor..." :
+                             currentLanguage == "ar" ? "الحالة: جارٍ الإلغاء..." :
+                             "Status: Cancelling...";
+        }
+
+        private void UpdateLanguageSelectionVisuals()
+        {
+            // reset
+            btnArabic.BackColor = sidebarColor;
+            btnEnglish.BackColor = sidebarColor;
+            btnTurkish.BackColor = sidebarColor;
+
+            btnArabic.ForeColor = textColor;
+            btnEnglish.ForeColor = textColor;
+            btnTurkish.ForeColor = textColor;
+
+            // highlight selected
+            Button selected = btnEnglish;
+            if (currentLanguage == "ar") selected = btnArabic;
+            else if (currentLanguage == "tr") selected = btnTurkish;
+
+            selected.BackColor = accentColor;
+            selected.ForeColor = Color.White;
+        }
+
+        private void BtnQuickTour_Click(object sender, EventArgs e)
+        {
+            ShowQuickTour();
+        }
+
+        private void BtnShortcutTips_Click(object sender, EventArgs e)
+        {
+            ShowUiTips();
+        }
+
+        private void ShowQuickTour()
+        {
+            string title;
+            string tourText;
+            switch (currentLanguage)
+            {
+                case "tr":
+                    title = "Hızlı Tur";
+                    tourText =
+                        "1) Resim Yükle: Bir görsel seçin.\n" +
+                        "2) Algoritma Seç: Listeden filtre/model seçin.\n" +
+                        "3) Parametreleri Ayarla: Eşik/Küme/İterasyon değerlerini düzenleyin.\n" +
+                        "4) Uygula: Apply Processing ile sonucu görün.\n" +
+                        "5) Karşılaştır: Grafik ve istatistiklere bakın.\n" +
+                        "6) Kaydet: Memnunsanız çıktıyı kaydedin.";
+                    break;
+                case "ar":
+                    title = "جولة سريعة";
+                    tourText =
+                        "1) تحميل صورة: اختر صورة أو ملف.\n" +
+                        "2) اختر الخوارزمية: من القائمة.\n" +
+                        "3) اضبط الإعدادات: العتبة/العناقيد/التكرارات.\n" +
+                        "4) طبّق: زر Apply Processing لعرض النتيجة.\n" +
+                        "5) قارن: تابع المخططات والإحصاءات.\n" +
+                        "6) احفظ: عند الرضا، صدّر النتيجة.";
+                    break;
+                default:
+                    title = "Quick Tour";
+                    tourText =
+                        "1) Load Image: pick a file to start.\n" +
+                        "2) Pick Algorithm: choose a filter/model.\n" +
+                        "3) Tune Params: adjust threshold/clusters/iterations.\n" +
+                        "4) Apply: hit Apply Processing to see the result.\n" +
+                        "5) Compare: review charts and stats.\n" +
+                        "6) Save: export when satisfied.";
+                    break;
+            }
+
+            MessageBox.Show(tourText, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void ShowUiTips()
+        {
+            string title;
+            string tips;
+            switch (currentLanguage)
+            {
+                case "tr":
+                    title = "UI İpuçları";
+                    tips =
+                        "• Hızlı geçiş için sol menüyü kullanın.\n" +
+                        "• Eşik kaydırıcısını yavaşça oynatıp kenar/ikili sonuçları gözlemleyin.\n" +
+                        "• K-Means için küme/iterasyonları dengesiz kümelenmede değiştirin.\n" +
+                        "• Üstteki KPI kartları süre/piksel/model bilgisini gösterir.\n" +
+                        "• Grafiklerde kıyas için orijinal kopyayı saklayın.";
+                    break;
+                case "ar":
+                    title = "نصائح الواجهة";
+                    tips =
+                        "• استخدم الشريط الجانبي للتنقل السريع.\n" +
+                        "• حرّك شريط العتبة ببطء لمراقبة الحواف أو العتبة الثنائية.\n" +
+                        "• عدّل عدد العناقيد/التكرارات في K-Means عند عدم توازن التجميع.\n" +
+                        "• بطاقات KPI العلوية تعرض الزمن/البكسلات/النموذج النشط.\n" +
+                        "• احتفظ بنسخة من الصورة الأصلية للمقارنة في الرسوم.";
+                    break;
+                default:
+                    title = "UI Tips";
+                    tips =
+                        "• Use the sidebar for quick navigation.\n" +
+                        "• Move the threshold slider slowly to watch edges/binary impact.\n" +
+                        "• Tweak clusters/iterations in K-Means if segmentation looks off.\n" +
+                        "• KPI cards on top show time/pixels/active model.\n" +
+                        "• Keep the original image for chart comparisons.";
+                    break;
+            }
+
+            MessageBox.Show(tips, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void lblThresholdValue_Click(object sender, EventArgs e)
+        {
+
         }
     }
 }
